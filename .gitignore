@@ -136,3 +136,10 @@ dmypy.json
 
 # Cython debug symbols
 cython_debug/
+
+*.pdf
+*.zip
+*.csv
+harmony_search_examples/
+.vscode/
+

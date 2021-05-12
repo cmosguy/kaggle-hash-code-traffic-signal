@@ -26,13 +26,14 @@ class Street:
         #   Update other cars on street         
         for i, car in enumerate(self.queue):
             car_name = list(car.keys())[0]
-            car_time_used = list(car.values())[0]
-            if isGreenLight:
-                if car_time_used >= self.time_used and i == 0:
-                    self.queue.remove(car)
-                    update_car = car_name
+            if cars[car_name].new_street_flag == False:
+                car_time_used = list(car.values())[0]
+                if isGreenLight:
+                    if car_time_used >= self.time_used and i == 0:
+                        self.queue.remove(car)
+                        update_car = car_name
+                    else:
+                        car[car_name] = car[car_name] + 1
                 else:
-                    car[car_name] = car[car_name] + 1
-            else:
-                car[car_name] = car[car_name] + 1 
+                    car[car_name] = car[car_name] + 1 
         return update_car

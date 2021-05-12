@@ -7,6 +7,7 @@ class Car:
         self.path = path
         self.current_street = 0
         self.score = 0 
+        self.new_street_flag = False
     
     #   Calulate score which this car received
     def update_score(self, F, D, T):
@@ -20,5 +21,6 @@ class Car:
                 self.current_street = -1
             else:
                 self.current_street = self.current_street + 1
+                self.new_street_flag = True
                 return self.path[self.current_street]
         return None

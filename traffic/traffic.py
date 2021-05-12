@@ -5,6 +5,8 @@ from copy import deepcopy
 
 import csv
 import pandas as pd
+from tqdm import tqdm
+from tqdm import trange
 
 
 class Traffic():
@@ -23,6 +25,8 @@ class Traffic():
         self.intersections = []
         self.cars = {}
         streets_in_path = set()
+        self.total_intersections = None
+
 
         # Open file ready to read
         #f = open(ROOT_DIR + '/hashcode.in', "r")
@@ -32,6 +36,7 @@ class Traffic():
         simulation_key = ['D', 'I', 'S', 'V', 'F']
         simulation_val = map(int, f.readline().split())
         self.simulation_config = dict(zip(simulation_key, simulation_val))
+        self.total_intersections = self.simulation_config['I']
 
         # Read streets detail
         for _ in range(self.simulation_config['S']):
@@ -42,10 +47,9 @@ class Traffic():
                 type_converted_line[0], type_converted_line[1], type_converted_line[2], type_converted_line[3])
             streets_tmp[type_converted_line[2]] = new_street
 
-        self.street_detail = pd.DataFrame(self.street_detail, columns=[
-                                     'start_int', 'end_int', 'name', 'time_used'])
+        self.street_detail = pd.DataFrame(self.street_detail, columns=['start_int', 'end_int', 'name', 'time_used'])
 
-        print("Successfully read streets detail")
+        print("Successfully read {} streets detail".format(self.simulation_config['S']))
 
         # Read cars path
         for i in range(self.simulation_config['V']):
@@ -55,21 +59,31 @@ class Traffic():
                 type_converted_line[0], type_converted_line[1:]]
             streets_in_path = streets_in_path.union(type_converted_line[1])
             car_name = 'car' + str(i)
-            new_car = Car(
-                car_name, type_converted_line[0], type_converted_line[1])
+            new_car = Car( car_name, type_converted_line[0], type_converted_line[1])
             self.cars[car_name] = new_car
 
-        print("Successfully read cars path")
+        print("Successfully read {} cars paths".format(len(self.cars)))
 
         # Remove street with no cars
+        orig_street_cnt = len(streets_tmp)
         self.street_detail = self.street_detail[self.street_detail['name'].isin(streets_in_path)]
         self.streets = {street: streets_tmp[street] for street in streets_in_path}
         self.simulation_config['S'] = len(self.streets)
 
-        print("Successfully remove streets with no cars")
+        print("Successfully removed {} streets with no cars".format(orig_street_cnt - len(self.streets)))
+        print("Total streets: {}".format(len(self.streets)))
+        print("Total cars: {}".format(len(self.cars)))
+        print("Total intersections: {}".format(self.total_intersections))
+
 
     # Generate intersections
-    def generate_intersection(self, scheduler):
+    def generate_intersection(self, scheduler=None, vector=None):
+
+        if (scheduler is None) and (vector):
+            scheduler = pd.DataFrame({'street_name': deepcopy(self.street_detail['name']), 'green_time': vector})
+        elif (scheduler is None) and (vector is None):
+            exit(2)
+
         intersects = {}
         for i in range(self.simulation_config['I']):
             streets_in = deepcopy(
@@ -139,36 +153,53 @@ class Traffic():
 
     # Function to simulate the traffic flow
 
-    def simulate(self):
+    def simulate(self, override_end_time=None, progress_bar = False,_callback=None):
         #     print("Starting traffic simulation.")
 
         #   Intial cars on streets
         for car in self.cars.values():
             init_street = car.path[0]
             self.streets[init_street].add_queue(car.name, True)
+            car.new_street_flag = False
 
         #   Simulate cars move
-        for T in range(self.simulation_config['D']):
+        end_time = self.simulation_config['D']+1
+        if override_end_time:
+            end_time = override_end_time+1
+
+        tprog = range
+        if progress_bar:
+            tprog = trange
+
+
+        for T in tprog(end_time):
+            # for each car reset the new street flag
+            for car in self.cars.values():
+                car.new_street_flag = False
+
             for intersection in self.intersections.values():
 
                 #   Find streets which currently green and red light
                 green_street, red_streets = intersection.update_light()
 
                 #   Update cars on street with green signal
-                car_to_new_street = self.streets[green_street].update_cars_move(
-                    self.cars, True)
+                car_to_new_street = self.streets[green_street].update_cars_move(self.cars, True)
 
                 #   Update cars on streets with red signal
                 for red_street in red_streets:
                     self.streets[red_street].update_cars_move(self.cars, False)
 
                 #   Update cars path
-                if car_to_new_street is not None:
+                if (car_to_new_street is not None):
+                    # if(self.cars[car_to_new_street].new_street_flag == False):
                     new_street = self.cars[car_to_new_street].update_current_street()
                     if new_street is not None:
                         self.streets[new_street].add_queue(car_to_new_street, False)
                     else:
-                        car_score = self.cars[car_to_new_street].update_score(
-                            self.simulation_config['F'], self.simulation_config['D'], T)
+                        self.cars[car_to_new_street].update_score(self.simulation_config['F'], end_time, T)
     #                     print("{} has reached the destination and received {} points.".format(car_to_new_street, car_score))
+                
+                # pbar.update(round(100/((end_time+1)/(T+1))))
+            if _callback:
+                _callback(T, deepcopy(self.cars), deepcopy(self.streets), deepcopy(self.street_detail))
         return deepcopy(self.cars)

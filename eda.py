@@ -46,9 +46,9 @@ def myCallback(time, cars, streets, streets_details):
 callback = myCallback
 
 #we have to restart the simulation with a clean new class to reinitialize
-t = Traffic(in_file='./example.in')
-#vector = [2, 1, 2, 1, 1]  #score 1002
-vector = [1, 1, 1, 1, 1]  
+t = Traffic(in_file='./example.in', truncate_cars=False)
+vector = [2, 1, 2, 1, 1]  #score 1002
+# vector = [1, 1, 1, 1, 1]  
 t.generate_intersection(vector=vector)
 cars = t.simulate(progress_bar=False, override_end_time=None, _callback=callback)
 scheduler_score = t.calculate_simulation_score(cars)

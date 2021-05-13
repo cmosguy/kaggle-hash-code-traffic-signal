@@ -7,6 +7,7 @@ import csv
 import pandas as pd
 from tqdm import tqdm
 from tqdm import trange
+import itertools
 
 
 class Traffic():
@@ -17,7 +18,7 @@ class Traffic():
     cars = {}
     intersections = []
 
-    def __init__(self, in_file='./hashcode.in'):
+    def __init__(self, in_file='./hashcode.in', truncate_cars=False):
 
         self.streets = {}
         streets_tmp = {}
@@ -26,6 +27,7 @@ class Traffic():
         self.cars = {}
         streets_in_path = set()
         self.total_intersections = None
+        self.end_time = 0
 
 
         # Open file ready to read
@@ -37,6 +39,7 @@ class Traffic():
         simulation_val = map(int, f.readline().split())
         self.simulation_config = dict(zip(simulation_key, simulation_val))
         self.total_intersections = self.simulation_config['I']
+        self.end_time = self.simulation_config['D']+1
 
         # Read streets detail
         for _ in range(self.simulation_config['S']):
@@ -74,6 +77,11 @@ class Traffic():
         print("Total streets: {}".format(len(self.streets)))
         print("Total cars: {}".format(len(self.cars)))
         print("Total intersections: {}".format(self.total_intersections))
+        print("Original endtime: {}".format(self.end_time-1))
+
+        if truncate_cars:
+            self.cars = dict(itertools.islice(self.cars.items(),truncate_cars))
+            print('Truncated cars to total of: {}'.format(len(self.cars.items())))
 
 
     # Generate intersections
@@ -163,16 +171,16 @@ class Traffic():
             car.new_street_flag = False
 
         #   Simulate cars move
-        end_time = self.simulation_config['D']+1
         if override_end_time:
-            end_time = override_end_time+1
+            self.end_time = override_end_time+1
+            print("Override end time: {}".format(self.end_time-1))
 
         tprog = range
         if progress_bar:
             tprog = trange
 
 
-        for T in tprog(end_time):
+        for T in tprog(self.end_time):
             # for each car reset the new street flag
             for car in self.cars.values():
                 car.new_street_flag = False
@@ -196,7 +204,7 @@ class Traffic():
                     if new_street is not None:
                         self.streets[new_street].add_queue(car_to_new_street, False)
                     else:
-                        self.cars[car_to_new_street].update_score(self.simulation_config['F'], end_time, T)
+                        self.cars[car_to_new_street].update_score(self.simulation_config['F'], self.end_time, T)
     #                     print("{} has reached the destination and received {} points.".format(car_to_new_street, car_score))
                 
                 # pbar.update(round(100/((end_time+1)/(T+1))))

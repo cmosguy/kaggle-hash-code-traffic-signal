@@ -124,16 +124,15 @@ print("Final score: {}".format(scheduler_score))
 
 
 # %% debugging with haschcode.in
-m = Traffic(in_file='./hashcode.in', truncate_cars=2)
+m = Traffic(in_file='./hashcode.in')
 # vector = list(np.random.randint(low=1, high=3, size=len(m.street_detail)))
 # m.generate_intersection(vector=vector)
 # %%
 m_sl = m.generate_intersection_schedules()
 m.generate_submission_file(intersection_schedule_list=m_sl,out_file_path='submission.hashcode.txt')
-m.read_submission_file(in_file_path='submission.hashcode.txt')
-
-m_cars = m.simulate(progress_bar=True)
 # %%
+m.read_submission_file(in_file_path='submission.hashcode.txt')
+m_cars = m.simulate(progress_bar=True)
 m_score = m.calculate_simulation_score(m_cars)
 print("Final score: {}".format(m_score))
 

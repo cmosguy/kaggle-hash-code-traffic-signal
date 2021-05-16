@@ -1,12 +1,104 @@
-from traffic.street import Street
-from traffic.intersection import Intersection
-from traffic.car import Car
-from copy import deepcopy
 import csv
 import pandas as pd
 from tqdm import tqdm
 from tqdm import trange
 import itertools
+from copy import deepcopy
+
+# Define class of car for keeping properties and methods
+class Car:
+    def __init__(self, name, total_street, path):
+        self.name = name
+        self.total_street = total_street
+        self.path = path
+        self.current_street = 0
+        self.score = 0 
+        self.new_street_flag = False
+    
+    #   Calulate score which this car received
+    def update_score(self, F, D, T):
+        self.score = F + (D - T) if T <= D else 0
+        return self.score
+    
+    #   Update current car position from its path      
+    def update_current_street(self):
+        if self.current_street >= 0:
+            if self.current_street >= self.total_street - 1:
+                self.current_street = -1
+            else:
+                self.current_street = self.current_street + 1
+                self.new_street_flag = True
+                return self.path[self.current_street]
+        return None
+    
+# Define class of intersection for keeping properties and methods
+class Intersection:
+    def __init__(self, name, streets_in, green_light_time):
+        self.name = name
+        self.streets_in = deepcopy(streets_in)
+        self.green_light_time = deepcopy(green_light_time)
+        self.current_light_index = 0
+        self.timer = 1
+        
+#     #   Inject new scheduler for the intersection     
+#     def plug_scheduler(self, scheduler):
+#         self.streets_in = deepcopy(list(scheduler.loc[scheduler['street_name'] == self.name, 'street_name']))
+#         self.green_light_time = deepcopy(list(scheduler[scheduler['street_name'].isin(self.streets_in)]['green_time']))
+#         self.current_light_index = 0
+#         self.timer = 1
+    #   Update green light status     
+    def update_light(self):
+        while self.green_light_time[self.current_light_index] <= 0:
+                self.current_light_index = self.current_light_index + 1
+                if self.current_light_index > len(self.streets_in)-1:
+                    self.current_light_index = 0
+        if self.timer > self.green_light_time[self.current_light_index]:
+            self.current_light_index = self.current_light_index + 1
+            self.timer = 1
+        else: self.timer = self.timer + 1
+                  
+        if self.current_light_index > len(self.streets_in)-1:
+            self.current_light_index = 0
+            
+        return [self.streets_in[self.current_light_index], self.streets_in[:self.current_light_index] + self.streets_in[self.current_light_index+1:]]
+        
+class Street:
+    def __init__(self, start_int, end_int, name, time_used):
+        self.start_int = start_int
+        self.end_int = end_int
+        self.name = name
+        self.time_used = time_used
+        self.queue = []
+    
+    #   Append new car driving on this street     
+    def add_queue(self, car_name, isInit):
+        if isInit: self.queue.append({car_name: self.time_used})
+        else: self.queue.append({car_name: 1})
+    
+    #   Update cars position on this street     
+    def update_cars_move(self, cars, isGreenLight):
+        update_car = None
+        
+        #   Remove car that reached the destination
+        if len(self.queue) > 0:
+            if cars[list(self.queue[0].keys())[0]].current_street == -1:
+                self.queue.pop(0)
+        
+        #   Update other cars on street         
+        for i, car in enumerate(self.queue):
+            car_name = list(car.keys())[0]
+            if cars[car_name].new_street_flag == False:
+                car_time_used = list(car.values())[0]
+                if isGreenLight:
+                    if car_time_used >= self.time_used and i == 0:
+                        self.queue.remove(car)
+                        update_car = car_name
+                    else:
+                        car[car_name] = car[car_name] + 1
+                else:
+                    car[car_name] = car[car_name] + 1 
+        return update_car
+    
 class Traffic():
     simulation_config = []
     streets = {}
@@ -73,7 +165,6 @@ class Traffic():
             self.cars = dict(itertools.islice(
                 self.cars.items(), truncate_cars))
             print('Truncated cars to total of: {}'.format(len(self.cars.items())))
-
     # Generate intersections
     def generate_intersection(self):
         intersects = {}
@@ -84,8 +175,8 @@ class Traffic():
                 green_time = []
                 intersects[i] = Intersection(i, streets_in, green_time)
         self.intersections = deepcopy(intersects)
-        print("Loaded {} intersections".format(len(self.intersections)), end='\n')
-
+        print("Loaded {} intersections".format(
+            len(self.intersections)), end='\n')
     # Used to calculate simulation score
     def calculate_simulation_score(self, cars):
         total_score = 0
@@ -146,37 +237,36 @@ class Traffic():
         tprog = range
         if progress_bar:
             tprog = trange
-
         for T in tprog(self.end_time):
             # for each car reset the new street flag
             for car in self.cars.values():
                 car.new_street_flag = False
-
             for intersection in self.intersections.values():
-                if intersection.green_light_time:
-                    #   Find streets which currently green and red light
-                    green_street, red_streets = intersection.update_light()
-                    #   Update cars on street with green signal
-                    car_to_new_street = self.streets[green_street].update_cars_move(self.cars, True)
-                    #   Update cars on streets with red signal
-                    for red_street in red_streets:
-                        self.streets[red_street].update_cars_move(self.cars, False)
-                    #   Update cars path
-                    if (car_to_new_street is not None):
-                        # if(self.cars[car_to_new_street].new_street_flag == False):
-                        new_street = self.cars[car_to_new_street].update_current_street(
-                        )
-                        if new_street is not None:
-                            self.streets[new_street].add_queue(car_to_new_street, False)
-                        else:
-                            self.cars[car_to_new_street].update_score(self.simulation_config['F'], self.end_time, T)
-        #                     print("{} has reached the destination and received {} points.".format(car_to_new_street, car_score))
+                #   Find streets which currently green and red light
+                green_street, red_streets = intersection.update_light()
+                #   Update cars on street with green signal
+                car_to_new_street = self.streets[green_street].update_cars_move(
+                    self.cars, True)
+                #   Update cars on streets with red signal
+                for red_street in red_streets:
+                    self.streets[red_street].update_cars_move(self.cars, False)
+                #   Update cars path
+                if (car_to_new_street is not None):
+                    # if(self.cars[car_to_new_street].new_street_flag == False):
+                    new_street = self.cars[car_to_new_street].update_current_street(
+                    )
+                    if new_street is not None:
+                        self.streets[new_street].add_queue(
+                            car_to_new_street, False)
+                    else:
+                        self.cars[car_to_new_street].update_score(
+                            self.simulation_config['F'], self.end_time, T)
+    #                     print("{} has reached the destination and received {} points.".format(car_to_new_street, car_score))
                 # pbar.update(round(100/((end_time+1)/(T+1))))
             if _callback:
                 _callback(T, deepcopy(self.cars), deepcopy(self.streets), deepcopy(
                     self.street_detail), deepcopy(self.intersections))
         return deepcopy(self.cars)
-
     def generate_intersection_schedules(self):
         def byGreenSeconds(e):
             return e['green_seconds']
@@ -187,35 +277,25 @@ class Traffic():
             intersection_schedule = {
                 'order_duration_green_lights': [],
                 'id': index,
-                'num_incoming_streets': 0
+                'num_incoming_streets': len(intersection.streets_in)
             }
             for street in intersection.streets_in:
                 is_start_of_path = 0
-                end_street_count = 0
-                not_end_street_count = 0
                 for c, car in self.cars.items():
                     if car.path[0] == street:
                         is_start_of_path = 1
-                    #check if this is the last street and does not require a light schedule
-                    if car.path.count(street):
-                        if car.path[-1] == street:
-                            end_street_count += car.path.index(street) == len(car.path)-1
-                        else:
-                            not_end_street_count += car.path.index(street) <= len(car.path)
-                        
-                if (not_end_street_count == 0 and end_street_count > 0):
-                    continue
                 order_duration_green_light = {
                     'street_name': street,
                     'green_seconds': 1+is_start_of_path
                 }
-                intersection_schedule['order_duration_green_lights'].append(order_duration_green_light)
+                intersection_schedule['order_duration_green_lights'].append(
+                    order_duration_green_light)
             if (len(intersection_schedule['order_duration_green_lights'])):
-                intersection_schedule['order_duration_green_lights'].sort(reverse=True, key=byGreenSeconds)
+                intersection_schedule['order_duration_green_lights'].sort(
+                    reverse=True, key=byGreenSeconds)
                 intersection_schedule_list.append(intersection_schedule)
-                intersection_schedule_list.sort(reverse=True, key=byNumberIncomingStreets)
-            
-            intersection_schedule['num_incoming_streets'] = len(intersection_schedule['order_duration_green_lights'])
+                intersection_schedule_list.sort(
+                    reverse=True, key=byNumberIncomingStreets)
                 # intersection_percentage = len(intersection_schedule_list) / len(self.intersections)
                 # print("{} / {} = {}".format(len(intersection_schedule_list), len(self.intersections), intersection_percentage ))
         return intersection_schedule_list
@@ -229,17 +309,15 @@ class Traffic():
                     out_file.write("{} {}\n".format(
                         order_duration_green_light['street_name'], order_duration_green_light['green_seconds']))
         print("\nWrote to file: {}".format(out_file_path, end="\n"))
-
     def read_submission_file(self, in_file_path='submit.example.txt'):
         in_file = open(in_file_path, 'r')
         lines = in_file.readlines()
         i = 0
         intersection_num = 0
         green_light_flag = False
-        intersections = {}
         while i < len(lines):
             if(i == 0):
-                total_intersections = int(lines[0].strip())
+                total_intersections = int(lines[0].strip()) * [None]
                 i += 1
             elif(i > 0 and green_light_flag == False):
                 intersection_num = int(lines[i].strip())
@@ -251,13 +329,15 @@ class Traffic():
                 street_names = num_streets * [None]
                 green_seconds = num_streets * [None]
                 for l in range(num_streets):
-                    try:
-                        street_names[l], green_seconds_str = lines[i + l].strip().split(' ')
-                        green_seconds[l] = int(green_seconds_str)
-                    except ValueError as e:
-                        print("Value error")
+                    street_names[l], green_seconds_str = lines[i +
+                                                               l].strip().split(' ')
+                    green_seconds[l] = int(green_seconds_str)
                 i += num_streets
                 green_light_flag = False
-                intersections[intersection_num] = Intersection(intersection_num, street_names, green_seconds)
+                self.intersections[intersection_num].streets_in = street_names
+                self.intersections[intersection_num].green_light_time = green_seconds
 
-        self.intersections = deepcopy(intersections)
+
+m = Traffic(in_file='../input/hashcode-2021-oqr-extension/hashcode.in')
+m_sl = m.generate_intersection_schedules()
+m.generate_submission_file(intersection_schedule_list=m_sl,out_file_path='submission.csv')

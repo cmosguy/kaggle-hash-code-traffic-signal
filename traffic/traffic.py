@@ -140,7 +140,7 @@ class Traffic():
             self.streets[init_street].add_queue(car.name, True)
             car.new_street_flag = False
         #   Simulate cars move
-        if override_end_time:
+        if override_end_time is not None:
             self.end_time = override_end_time+1
             print("Override end time: {}".format(self.end_time-1))
         tprog = range

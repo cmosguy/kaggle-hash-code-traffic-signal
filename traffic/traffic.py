@@ -30,7 +30,7 @@ class Traffic():
         simulation_val = map(int, f.readline().split())
         self.simulation_config = dict(zip(simulation_key, simulation_val))
         self.total_intersections = self.simulation_config['I']
-        self.end_time = self.simulation_config['D']+1
+        self.end_time = self.simulation_config['D']
         # Read streets detail
         for _ in range(self.simulation_config['S']):
             type_converted_line = list(
@@ -68,7 +68,7 @@ class Traffic():
         print("Total streets: {}".format(len(self.streets)))
         print("Total cars: {}".format(len(self.cars)))
         print("Total intersections: {}".format(self.total_intersections))
-        print("Original endtime: {}".format(self.end_time-1))
+        print("Original endtime: {}".format(self.end_time))
         if truncate_cars:
             self.cars = dict(itertools.islice(
                 self.cars.items(), truncate_cars))
@@ -87,11 +87,12 @@ class Traffic():
         print("Loaded {} intersections".format(len(self.intersections)), end='\n')
 
     # Used to calculate simulation score
-    def calculate_simulation_score(self, cars):
+    def calculate_simulation_score(self):
         total_score = 0
-        for car in cars.values():
+        for car in self.cars.values():
             total_score = total_score + car.score
         return total_score
+
     # # Change the scheduler of intersections
     # def change_scheduler(intersections, scheduler):
     #     for intersection in intersections.values():
@@ -132,7 +133,7 @@ class Traffic():
         except:
             return attr
     # Function to simulate the traffic flow
-    def simulate(self, override_end_time=None, progress_bar=False, _callback=None):
+    def simulate(self, override_end_time=None, progress_bar=False, callback=None, queue_callback=None):
         #     print("Starting traffic simulation.")
         #   Intial cars on streets
         for car in self.cars.values():
@@ -141,8 +142,8 @@ class Traffic():
             car.new_street_flag = False
         #   Simulate cars move
         if override_end_time is not None:
-            self.end_time = override_end_time+1
-            print("Override end time: {}".format(self.end_time-1))
+            self.end_time = override_end_time
+            print("Override end time: {}".format(self.end_time))
         tprog = range
         if progress_bar:
             tprog = trange
@@ -172,10 +173,11 @@ class Traffic():
                             self.cars[car_to_new_street].update_score(self.simulation_config['F'], self.end_time, T)
         #                     print("{} has reached the destination and received {} points.".format(car_to_new_street, car_score))
                 # pbar.update(round(100/((end_time+1)/(T+1))))
-            if _callback:
-                _callback(T, deepcopy(self.cars), deepcopy(self.streets), deepcopy(
-                    self.street_detail), deepcopy(self.intersections))
-        return deepcopy(self.cars)
+            if callback:
+                callback(T, deepcopy(self.cars), deepcopy(self.streets), deepcopy(self.street_detail), deepcopy(self.intersections))
+            if queue_callback:
+                queues = [len(values.queue) for key, values in self.streets.items()]
+                queue_callback(T, queues)
 
     def generate_intersection_schedules(self):
         def byGreenSeconds(e):
@@ -183,12 +185,20 @@ class Traffic():
         def byNumberIncomingStreets(s):
             return s['num_incoming_streets']
         intersection_schedule_list = []
+
+
+        #collect all the cars paths at time=0 and make the stop time for them equivalent to the count
+        cars_in_street_at_t0 = [car.path[0] for key, car in self.cars.items()]
+        street_freq_at_t0 = [cars_in_street_at_t0.count(street) for street in cars_in_street_at_t0]
+        street_freq_at_t0_dict = dict(list(zip(cars_in_street_at_t0, street_freq_at_t0)))
+
         for index, intersection in tqdm(self.intersections.items()):
             intersection_schedule = {
                 'order_duration_green_lights': [],
                 'id': index,
                 'num_incoming_streets': 0
             }
+
             for street in intersection.streets_in:
                 is_start_of_path = 0
                 end_street_count = 0
@@ -205,11 +215,14 @@ class Traffic():
                         
                 if (not_end_street_count == 0 and end_street_count > 0):
                     continue
+
                 order_duration_green_light = {
                     'street_name': street,
-                    'green_seconds': 1+is_start_of_path
+                    'green_seconds': 1 if (street not in street_freq_at_t0_dict) else street_freq_at_t0_dict[street]
                 }
+
                 intersection_schedule['order_duration_green_lights'].append(order_duration_green_light)
+
             if (len(intersection_schedule['order_duration_green_lights'])):
                 intersection_schedule['order_duration_green_lights'].sort(reverse=True, key=byGreenSeconds)
                 intersection_schedule_list.append(intersection_schedule)
@@ -219,6 +232,7 @@ class Traffic():
                 # intersection_percentage = len(intersection_schedule_list) / len(self.intersections)
                 # print("{} / {} = {}".format(len(intersection_schedule_list), len(self.intersections), intersection_percentage ))
         return intersection_schedule_list
+
     def generate_submission_file(self, intersection_schedule_list, out_file_path='submit.example.txt'):
         with open(out_file_path, 'w') as out_file:
             out_file.write("{}\n".format(len(intersection_schedule_list)))

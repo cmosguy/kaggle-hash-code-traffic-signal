@@ -9,6 +9,7 @@ from datetime import datetime
 from tqdm import tqdm
 
 import matplotlib.pyplot as plt
+import vaex
 
 
 # %%
@@ -113,78 +114,132 @@ def myCallback(time, cars, streets, streets_details, intersections):
     # cars_df.head()
 
 
-callback = myCallback
+# %%
+def set_queues_callback(time, queues):
+    global street_queues
 
-# %% we have to restart the simulation with a clean new class to reinitialize
+    street_queues[time] = queues
+
+#%%
+
+callback = set_queues_callback
 t = Traffic(in_file='./example.in', truncate_cars=False)
 
-
-t_sl = t.generate_intersection_schedules()
-t.generate_submission_file(intersection_schedule_list=t_sl)
-
-
-
-#%%
-
-#vector = [2, 1, 2, 1, 1]  # score 1002
-# vector = [1, 1, 1, 1, 1]
-#t.generate_intersection(vector=vector)
-t.read_submission_file()
-cars = t.simulate(progress_bar=False, override_end_time=None, _callback=callback)
-scheduler_score = t.calculate_simulation_score(cars)
-print("Final score: {}".format(scheduler_score))
-
-#%%
-cars
-# %%
-
 num_streets = len(t.streets)
-end_time = 2
-street_queues = {}
-for street in list(t.streets.keys()):
-    street_queues = end_time * [None]
-cars = t.simulate(progress_bar=False, override_end_time=end_time, _callback=callback)
+street_queues = np.zeros((t.end_time, num_streets), dtype=int)
+t_sl = t.generate_intersection_schedules()
+t.read_submission_file()
+t.simulate(progress_bar=False, override_end_time=None, queue_callback=callback)
 
+t_score = t.calculate_simulation_score()
+print("Final score: {}".format(t_score))
+
+# %%
+street_queues_df = pd.DataFrame(street_queues, columns=list(t.streets.keys()))
+street_queues_df.head()
+
+street_name = 'rue-de-moscou'
+int_debug = t.street_detail.set_index('name').loc[street_name,'end_int']
+streets_in = list(t.street_detail[t.street_detail['end_int'] == int_debug]['name'])
+
+fig = plt.figure()
+colnames = street_queues_df.columns
+ax = street_queues_df.plot(style='.-', figsize = (8,4))
+ax.legend(bbox_to_anchor=(1.0, 1.0))
+ax.set_xlabel('Time (T)')
+ax.set_ylabel('# of cars in queue')
+ax.plot()
 
 # %% debugging with haschcode.in
 m = Traffic(in_file='./hashcode.in')
-# vector = list(np.random.randint(low=1, high=3, size=len(m.street_detail)))
-# m.generate_intersection(vector=vector)
-# %%
 m_sl = m.generate_intersection_schedules()
 m.generate_submission_file(intersection_schedule_list=m_sl,out_file_path='submission.hashcode.txt')
+
 # %%
+m = Traffic(in_file='./hashcode.in')
+num_streets = len(m.streets)
+callback = set_queues_callback
+street_queues = np.zeros((m.end_time, num_streets), dtype=int)
 m.read_submission_file(in_file_path='submission.hashcode.txt')
-m_cars = m.simulate(progress_bar=True, _callback=callback)
-m_score = m.calculate_simulation_score(m_cars)
+m.simulate(progress_bar=True, override_end_time=None, queue_callback=callback)
+m_score = m.calculate_simulation_score()
 print("Final score: {}".format(m_score))
 
 
-# %%
-street_queues.head()
-# %%
-street_queues.max(axis=1)
-
-# %% first get max values for each time
-street_queues.idxmax()
+#%%
+street_queues_df = pd.DataFrame(street_queues, columns=list(m.streets.keys()))
+street_queues_df.to_csv('street_queues.hashcode.csv')
 
 #%%
+street_queues_df.head()
 
-street_name = 'cbc-cb'
+#%% top 5 at specific time
+
+fig = plt.figure()
+
+time = 479
+
+top5 = list(street_queues_df.loc[time].T.sort_values(ascending=False)[:5].index)
+ax = street_queues_df[top5].plot(style='.-', figsize = (8,4))
+ax.legend(bbox_to_anchor=(1.0, 1.0))
+ax.set_title("Worst top 5 queues at time={}".format(time))
+ax.set_xlabel('Time (T)')
+ax.set_ylabel('# of cars in queue')
+ax.plot()
 
 
+
+# %% first get max values for each time
+top10 = list(street_queues_df.max().sort_values(ascending=False)[:10].index)
+ax = street_queues_df[top10][2500:4000].plot(style='.-', figsize = (8,4))
+ax.legend(bbox_to_anchor=(1.0, 1.0))
+ax.set_title("Worst top 10 worst queues")
+ax.set_xlabel('Time (T)')
+ax.set_ylabel('# of cars in queue')
+ax.plot()
+
+#%%
+max_queues = street_queues_df.max()
+#%%
+x_max = street_queues_df.idxmax()
+#%%
+plt.scatter(x=x_max[:20], y=max_queues[:20])
+# ax.legend(bbox_to_anchor=(1.0, 1.0))
+# ax.set_title("Worst top 10 worst queues")
+# ax.set_xlabel('Time (T)')
+# ax.set_ylabel('# of cars in queue')
+plt.show()
+
+
+#%%
 #now plot all the streets in the intersection across time
 int_debug = m.street_detail.set_index('name').loc[street_name,'end_int']
 streets_in = list(m.street_detail[m.street_detail['end_int'] == int_debug]['name'])
 # plt.scatter(street_queues.columns, street_queues.loc[streets_in]) 
 
-def onpick3(event):
-    ind = event.ind
-    print('onpick3 scatter:')#, ind, np.take(x, ind), np.take(y, ind))
-fig = plt.figure()
-colnames = street_queues.loc[streets_in].T.columns
-ax = street_queues.loc[streets_in].T.plot(y=colnames, figsize = (8,4))
+
+#%% count the cars starting at time 0
+cars_in_street_at_t0 = [car.path[0] for key, car in m.cars.items()]
+street_freq_at_t0 = [cars_in_street_at_t0.count(street) for street in cars_in_street_at_t0]
+street_freq_at_t0_dict = dict(list(zip(cars_in_street_at_t0, street_freq_at_t0)))
+
+# %%
+street_freq_at_t0_dict_sorted = [(street_freq_at_t0_dict[key], key) for key in street_freq_at_t0_dict]
+street_freq_at_t0_dict_sorted.sort(reverse=True)
+
+#%%
+street_queues_df = vaex.from_pandas(pd.DataFrame(street_queues, columns=list(m.streets.keys())))
+# %% convert csv into chunks and storing as hd5 on disk https://vaex.readthedocs.io/en/latest/faq.html#I-have-a-massive-CSV-file-which-I-can-not-fit-all-into-memory-at-one-time.-How-do-I-convert-it-to-HDF5 
+street_queues_df = vaex.read_csv('street_queues.hashcode.csv' , convert=True, chunk_size=1_000_000)
+
+# %%
+
+intersection_num = 0 
+streets_in_intersection = m.intersections[intersection_num].streets_in
+ax = street_queues_df[streets_in_intersection].plot(style='.-', figsize = (8,4))
 ax.legend(bbox_to_anchor=(1.0, 1.0))
-fig.canvas.mpl_connect('pick_event', onpick3)
+ax.set_title("Street queeus for intersection {}".format(intersection_num))
+ax.set_xlabel('Time (T)')
+ax.set_ylabel('# of cars in queue')
 ax.plot()
 # %%

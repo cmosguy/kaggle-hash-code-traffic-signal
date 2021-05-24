@@ -119,6 +119,7 @@ class Traffic():
     #             for street, green_time in zip(intersection.streets_in, intersection.green_light_time):
     #                 file.write("{} {}\n".format(str(street), int(green_time)))
     # Generate output file
+
     def generate_output_file(self, outfile='submission.csv'):
         with open(outfile, 'w', newline='') as file:
             writer = csv.writer(file)
@@ -129,6 +130,7 @@ class Traffic():
                 for street, green_time in zip(intersection.streets_in, intersection.green_light_time):
                     writer.writerow(
                         ["{} {}".format(str(street), int(green_time))])
+
     def convert_type(self, attr):
         try:
             return int(attr)
@@ -163,7 +165,11 @@ class Traffic():
                     car_to_new_street = self.streets[green_street].update_cars_move(self.cars, True)
                     #   Update cars on streets with red signal
                     for red_street in red_streets:
-                        self.streets[red_street].update_cars_move(self.cars, False)
+                        try:
+                            self.streets[red_street].update_cars_move(self.cars, False)
+                        except KeyError as e:
+                            print("red_street={}".format(red_street))
+
                     #   Update cars path
                     if (car_to_new_street is not None):
                         # if(self.cars[car_to_new_street].new_street_flag == False):
@@ -270,21 +276,6 @@ class Traffic():
                 # increment 1 second to pass through intersection
                 T += 1  
 
-
-    def generate_submission_file(self, out_file_path='submit.example.txt'):
-
-        with open(out_file_path, 'w') as out_file:
-            out_file.write("{}\n".format(len(self.intersections)))
-
-            for intersection in list(self.intersections.keys()):
-                # 'intersection' is a Intersection variable
-
-                out_file.write("{}\n{}\n".format(intersection.name, len(intersection.streets_in)))
-
-                for i, street in self.intersection.streets_in:
-                    out_file.write("{} {}\n".format( self.intersection.streets_in[i], self.intersection.green_light_time[i]))
-
-        print("\nWrote to file: {}".format(out_file_path, end="\n"))
 
     def read_submission_file(self, in_file_path='submit.example.txt'):
         in_file = open(in_file_path, 'r')

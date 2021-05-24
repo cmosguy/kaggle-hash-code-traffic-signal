@@ -76,10 +76,10 @@ ax.plot()
 # %% debugging with haschcode.in
 m = Traffic(in_file='./hashcode.in')
 m.generate_intersection_schedules()
-m.generate_submission_file(out_file_path='submission.hashcode.txt')
+# m.generate_output_file(outfile='submission.hashcode.txt')
 
 #%%
-m.generate_submission_file(out_file_path='submission.hashcode.txt')
+m.generate_output_file(outfile='submission.hashcode.txt')
 
 # %%
 m = Traffic(in_file='./hashcode.in')
@@ -91,6 +91,11 @@ m.simulate(progress_bar=True, override_end_time=None, queue_callback=callback)
 m_score = m.calculate_simulation_score()
 print("Final score: {}".format(m_score))
 
+
+#%%
+for int_num, intersection in m.intersections.items():
+    if 'None' in intersection.streets_in:
+        print("int_num={}".format(intersection.name))
 
 #%%
 # street_queues_df = pd.DataFrame(street_queues, columns=list(m.streets.keys()))

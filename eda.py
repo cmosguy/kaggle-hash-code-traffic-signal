@@ -167,13 +167,53 @@ print("Final score: {}".format(m_score))
 
 
 #%%
-street_queues_df = pd.DataFrame(street_queues, columns=list(m.streets.keys()))
-street_queues_df.to_csv('street_queues.hashcode.csv')
+# street_queues_df = pd.DataFrame(street_queues, columns=list(m.streets.keys()))
+# street_queues_df.to_csv('street_queues.hashcode.csv')
+np.save('street_queues.hashcode.npy', street_queues)
 
 #%%
-street_queues_df.head()
+m = Traffic(in_file='./hashcode.in')
+m.read_submission_file(in_file_path='submission.hashcode.txt')
+street_queues = np.load('street_queues.hashcode.npy', mmap_mode='r')
 
+#%%
+m.intersections[0].streets_in
+window = sum(m.intersections[0].green_light_time)
+
+#%% get the strets for intersection 0 from street queues
+int_0_queues_indexes = np.where(np.isin(list(m.streets.keys()), m.intersections[0].streets_in))
+int_0_queues = np.squeeze(street_queues[:,int_0_queues_indexes],axis=1)
+
+#%%
+plt.plot(int_0_queues[:,:10])
+plt.show()
+#%%
+dydx = np.divide(np.diff(int_0_queues[:,:10],axis=0),np.ones((int_0_queues.shape[0]-1,10)))
+plt.plot(dydx)
+plt.show()
+
+#%%
+dydx = np.divide(np.diff(int_0_queues,axis=0),np.ones((int_0_queues.shape[0]-1,int_0_queues.shape[1])))
+# plt.plot(dydx)
+# plt.show()
+#%%
+plt.plot(dydx[:,0])
+plt.show()
+
+#%%
+lst = dydx[:,1]
+n=97
+chunked = [lst[i:i+n] for i in range(0,len(lst), n)]
+
+for chunk in chunked:
+    plt.plot(chunk>0)
+plt.show()
+
+#%%
+plt.plot(dydx[0:95*3,:] > 0)
+plt.show()
 #%% top 5 at specific time
+
 
 fig = plt.figure()
 
@@ -242,4 +282,126 @@ ax.set_title("Street queeus for intersection {}".format(intersection_num))
 ax.set_xlabel('Time (T)')
 ax.set_ylabel('# of cars in queue')
 ax.plot()
+# %% taking different approach, try to find all unique paths
+# conclusion: there are no real unique paths
+unique_car_paths = []
+unchecked_car_paths = list(m.cars.keys())
+
+unique_car_paths.append(unchecked_car_paths.pop(0))
+
+for unchecked_car_path in unchecked_car_paths:
+    unique_found = False
+    for unique_car_path in unique_car_paths:
+        if set(m.cars[unique_car_path].path) & set(m.cars[unchecked_car_path].path):
+            unique_car_paths.remove(unique_car_path) 
+            unique_found = False
+            break
+        else:
+            unique_found = True
+    
+    if unique_found:
+        unique_car_paths.append(unchecked_car_path)
+
+
+# %% order car paths from shortest to longest
+from traffic.traffic import Intersection
+from tqdm import tqdm
+m = Traffic(in_file='./hashcode.in')
+# m.read_submission_file(in_file_path='submission.hashcode.txt')
+
+all_streets = []
+[all_streets.extend(car.path) for key, car in m.cars.items()]
+unique_streets = list(set().union(all_streets)) 
+
+intersections = {}
+for intersection_num in range(m.street_detail['end_int'].max()):
+    possible_street_names = list(m.street_detail[m.street_detail['end_int'] == intersection_num]['name'])
+    street_names = list(set(unique_streets).intersection(possible_street_names))
+
+    intersections[intersection_num] = Intersection(intersection_num, [None] * len(street_names), [1] * len(street_names))
+
+m.intersections = deepcopy(intersections)
+
+intersections_df = make_intersections_df(intersections=m.intersections)
+streets_df = make_streets_df(streets=m.streets, intersections_df=intersections_df).join( intersections_df[['street_in', 'single_street_in', 'green_light']].set_index('street_in'), on='name')
+streets_df.set_index('name', inplace=True)
+cars_df = make_cars_df(cars=m.cars, streets_df=streets_df)
+
+# %% sort cars by lowest travel time and then work your way through
+cars_index_sorted = list(cars_df.sort_values('total_travel_time',ascending=True).index)
+
+pbar = tqdm(cars_index_sorted)
+for car_index in pbar:
+    T = 0
+    car_path = m.cars["car{}".format(car_index)].path
+    for index, street in enumerate(car_path):
+        #do not do any scheduling for last car path
+        if index == len(car_path)-1:
+            break
+        #start intersection 
+        int_num = list(m.street_detail[m.street_detail['name']==street]['end_int'])[0]
+        total_ints = len(m.intersections[int_num].streets_in)
+
+
+        #increment T by the street value time used 
+        if index > 0:
+            T += streets_df.filter([street], axis=0)['time_used'][0]
+
+        duration_index = T % total_ints
+
+        #check if street all ready defined in tersection schedule, if not set it to new value
+        if street in m.intersections[int_num].streets_in:
+
+            #now, get the duration tick add the remaining timer time on depending where it is 
+            existing_duration_index = m.intersections[int_num].streets_in.index(street)
+
+            if existing_duration_index < duration_index:
+                #if existing time slot is less than the current duration tick
+                #then you just have to add the time it takes to reach that next tick
+                #you have to wait till it loops back around
+                T += (total_ints - 1 - duration_index) + existing_duration_index + 1
+            else:
+                #if existing time slot is > duration time then subtract total_int - duration_index
+                T += existing_duration_index - duration_index
+
+        else:
+
+            #if the street has not been defined, but some other street is taking the time slot
+            #then add it to the next available slot time 
+            if m.intersections[int_num].streets_in[duration_index] is None:
+                m.intersections[int_num].streets_in[duration_index] = street
+                # T += duration_index
+            else:
+                #check if there are any available time slots beyond the current time index
+                if None in m.intersections[int_num].streets_in[duration_index:]:
+                    remaining_time_duration_index = m.intersections[int_num].streets_in[duration_index:].index(None)
+                    new_duration_index = duration_index + remaining_time_duration_index
+                    T += remaining_time_duration_index
+                    m.intersections[int_num].streets_in[new_duration_index] = street
+                else:
+                    #now, if there are no time slots available above the current index then have 
+                    # wait and loop around in the timer duration
+                    try:
+                        looped_time_duration_index = m.intersections[int_num].streets_in[0:duration_index].index(None)
+                        T += (total_ints - 1 - duration_index) + looped_time_duration_index + 1
+                        m.intersections[int_num].streets_in[looped_time_duration_index] = street
+                    except ValueError as e:
+                        print("Value error")
+
+        # increment 1 second to pass through intersection
+        T += 1  
+    pbar.set_description("Car processing %s" % car_index)
+
+
+#%%
+3 % 2
+
+
+# %%
+streets_df.info()
+# %%
+intersections_df.head()
+
+# %%
+len(m.intersections[0].streets_in)
 # %%

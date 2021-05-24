@@ -189,7 +189,9 @@ class Traffic():
 
     def generate_intersection_schedules(self):
         all_streets = []
-        [all_streets.extend(car.path) for key, car in self.cars.items()]
+
+        # we only want to collect all the streets in the car paths, except for the last street
+        [all_streets.extend(car.path[:-1]) for key, car in self.cars.items()]
         unique_streets = list(set().union(all_streets)) 
 
         intersections = {}
@@ -214,11 +216,9 @@ class Traffic():
             pbar.set_description("Car processing %s" % car_index)
 
             T = 0
-            car_path = self.cars["car{}".format(car_index)].path
+            #skip last street in car path
+            car_path = self.cars["car{}".format(car_index)].path[:-1]
             for index, street in enumerate(car_path):
-                #do not do any scheduling for last car path
-                if index == len(car_path)-1:
-                    break
                 #start intersection 
                 try:
                     int_num = list(self.street_detail[self.street_detail['name']==street]['end_int'])[0]

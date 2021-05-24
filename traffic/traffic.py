@@ -7,6 +7,8 @@ import pandas as pd
 from tqdm import tqdm
 from tqdm import trange
 import itertools
+from datetime import datetime
+
 class Traffic():
     simulation_config = []
     streets = {}
@@ -180,68 +182,108 @@ class Traffic():
                 queue_callback(T, queues)
 
     def generate_intersection_schedules(self):
-        def byGreenSeconds(e):
-            return e['green_seconds']
-        def byNumberIncomingStreets(s):
-            return s['num_incoming_streets']
-        intersection_schedule_list = []
+        all_streets = []
+        [all_streets.extend(car.path) for key, car in self.cars.items()]
+        unique_streets = list(set().union(all_streets)) 
+
+        intersections = {}
+        for intersection_num in range(self.street_detail['end_int'].max()+1):
+            possible_street_names = list(self.street_detail[self.street_detail['end_int'] == intersection_num]['name'])
+            street_names = list(set(unique_streets).intersection(possible_street_names))
+
+            intersections[intersection_num] = Intersection(intersection_num, [None] * len(street_names), [1] * len(street_names))
+
+        self.intersections = deepcopy(intersections)
+
+        intersections_df = self.make_intersections_df(intersections=self.intersections)
+        streets_df = self.make_streets_df(streets=self.streets, intersections_df=intersections_df).join( intersections_df[['street_in', 'single_street_in', 'green_light']].set_index('street_in'), on='name')
+        streets_df.set_index('name', inplace=True)
+        cars_df = self.make_cars_df(cars=self.cars, streets_df=streets_df)
+
+        # %% sort cars by lowest travel time and then work your way through
+        cars_index_sorted = list(cars_df.sort_values('total_travel_time',ascending=True).index)
+
+        pbar = tqdm(cars_index_sorted)
+        for car_index in pbar:
+            pbar.set_description("Car processing %s" % car_index)
+
+            T = 0
+            car_path = self.cars["car{}".format(car_index)].path
+            for index, street in enumerate(car_path):
+                #do not do any scheduling for last car path
+                if index == len(car_path)-1:
+                    break
+                #start intersection 
+                try:
+                    int_num = list(self.street_detail[self.street_detail['name']==street]['end_int'])[0]
+                    total_ints = len(self.intersections[int_num].streets_in)
+
+                except KeyError as e:
+                    print("key error car{} street={} index={} int_num={}".format(car_index, street, index, int_num))
 
 
-        #collect all the cars paths at time=0 and make the stop time for them equivalent to the count
-        cars_in_street_at_t0 = [car.path[0] for key, car in self.cars.items()]
-        street_freq_at_t0 = [cars_in_street_at_t0.count(street) for street in cars_in_street_at_t0]
-        street_freq_at_t0_dict = dict(list(zip(cars_in_street_at_t0, street_freq_at_t0)))
+                #increment T by the street value time used 
+                if index > 0:
+                    T += streets_df.filter([street], axis=0)['time_used'][0]
 
-        for index, intersection in tqdm(self.intersections.items()):
-            intersection_schedule = {
-                'order_duration_green_lights': [],
-                'id': index,
-                'num_incoming_streets': 0
-            }
+                duration_index = T % total_ints
 
-            for street in intersection.streets_in:
-                is_start_of_path = 0
-                end_street_count = 0
-                not_end_street_count = 0
-                for c, car in self.cars.items():
-                    if car.path[0] == street:
-                        is_start_of_path = 1
-                    #check if this is the last street and does not require a light schedule
-                    if car.path.count(street):
-                        if car.path[-1] == street:
-                            end_street_count += car.path.index(street) == len(car.path)-1
+                #check if street all ready defined in tersection schedule, if not set it to new value
+                if street in self.intersections[int_num].streets_in:
+
+                    #now, get the duration tick add the remaining timer time on depending where it is 
+                    existing_duration_index = self.intersections[int_num].streets_in.index(street)
+
+                    if existing_duration_index < duration_index:
+                        #if existing time slot is less than the current duration tick
+                        #then you just have to add the time it takes to reach that next tick
+                        #you have to wait till it loops back around
+                        T += (total_ints - 1 - duration_index) + existing_duration_index + 1
+                    else:
+                        #if existing time slot is > duration time then subtract total_int - duration_index
+                        T += existing_duration_index - duration_index
+
+                else:
+
+                    #if the street has not been defined, but some other street is taking the time slot
+                    #then add it to the next available slot time 
+                    if self.intersections[int_num].streets_in[duration_index] is None:
+                        self.intersections[int_num].streets_in[duration_index] = street
+                        # T += duration_index
+                    else:
+                        #check if there are any available time slots beyond the current time index
+                        if None in self.intersections[int_num].streets_in[duration_index:]:
+                            remaining_time_duration_index = self.intersections[int_num].streets_in[duration_index:].index(None)
+                            new_duration_index = duration_index + remaining_time_duration_index
+                            T += remaining_time_duration_index
+                            self.intersections[int_num].streets_in[new_duration_index] = street
                         else:
-                            not_end_street_count += car.path.index(street) <= len(car.path)
-                        
-                if (not_end_street_count == 0 and end_street_count > 0):
-                    continue
+                            #now, if there are no time slots available above the current index then have 
+                            # wait and loop around in the timer duration
+                            try:
+                                looped_time_duration_index = self.intersections[int_num].streets_in[0:duration_index].index(None)
+                                T += (total_ints - 1 - duration_index) + looped_time_duration_index + 1
+                                self.intersections[int_num].streets_in[looped_time_duration_index] = street
+                            except ValueError as e:
+                                print("Value error")
 
-                order_duration_green_light = {
-                    'street_name': street,
-                    'green_seconds': 1 if (street not in street_freq_at_t0_dict) else street_freq_at_t0_dict[street]
-                }
+                # increment 1 second to pass through intersection
+                T += 1  
 
-                intersection_schedule['order_duration_green_lights'].append(order_duration_green_light)
 
-            if (len(intersection_schedule['order_duration_green_lights'])):
-                intersection_schedule['order_duration_green_lights'].sort(reverse=True, key=byGreenSeconds)
-                intersection_schedule_list.append(intersection_schedule)
-                intersection_schedule_list.sort(reverse=True, key=byNumberIncomingStreets)
-            
-            intersection_schedule['num_incoming_streets'] = len(intersection_schedule['order_duration_green_lights'])
-                # intersection_percentage = len(intersection_schedule_list) / len(self.intersections)
-                # print("{} / {} = {}".format(len(intersection_schedule_list), len(self.intersections), intersection_percentage ))
-        return intersection_schedule_list
+    def generate_submission_file(self, out_file_path='submit.example.txt'):
 
-    def generate_submission_file(self, intersection_schedule_list, out_file_path='submit.example.txt'):
         with open(out_file_path, 'w') as out_file:
-            out_file.write("{}\n".format(len(intersection_schedule_list)))
-            for intersection_schedule in intersection_schedule_list:
-                out_file.write("{}\n{}\n".format(
-                    intersection_schedule['id'], intersection_schedule['num_incoming_streets']))
-                for order_duration_green_light in intersection_schedule['order_duration_green_lights']:
-                    out_file.write("{} {}\n".format(
-                        order_duration_green_light['street_name'], order_duration_green_light['green_seconds']))
+            out_file.write("{}\n".format(len(self.intersections)))
+
+            for intersection in list(self.intersections.keys()):
+                # 'intersection' is a Intersection variable
+
+                out_file.write("{}\n{}\n".format(intersection.name, len(intersection.streets_in)))
+
+                for i, street in self.intersection.streets_in:
+                    out_file.write("{} {}\n".format( self.intersection.streets_in[i], self.intersection.green_light_time[i]))
+
         print("\nWrote to file: {}".format(out_file_path, end="\n"))
 
     def read_submission_file(self, in_file_path='submit.example.txt'):
@@ -275,3 +317,80 @@ class Traffic():
                 intersections[intersection_num] = Intersection(intersection_num, street_names, green_seconds)
 
         self.intersections = deepcopy(intersections)
+
+    def make_streets_df(self, streets, intersections_df, dbg_print=False):
+        streets_dict = {}
+
+        start_time = datetime.now()
+        i = 0
+        for street, values in streets.items():
+            streets_dict[i] = {
+                'name': street,
+                'in_queue': len(values.queue),
+                'start_int': values.start_int,
+                'end_int': values.end_int,
+                'time_used': values.time_used
+                # 'green_light': intersections_df[intersections_df.street_in == street]['green_light'].values[0]
+                # 'single_street_in': intersections_df[intersections_df.street_in == street]['single_street_in'].values[0],
+            }
+            i = i + 1
+
+        streets_df = pd.DataFrame.from_dict(streets_dict, "index")
+        end_time = datetime.now()
+        execution_time = (end_time - start_time).total_seconds() * 1000
+
+        print("Creating streets_df time: {}ms".format(execution_time)) if dbg_print==True else None
+
+        return streets_df
+
+
+    def make_intersections_df(self, intersections, dbg_print=False):
+        intersections_dict = {}
+
+        start_time = datetime.now()
+        i = 0
+        for index, intersection in intersections.items():
+            for street_in_index, street_in in enumerate(intersection.streets_in):
+                intersections_dict[i] = {
+                    'intersection_num': index,
+                    'street_in': street_in,
+                    'green_light_time': intersection.green_light_time[street_in_index],
+                    'single_street_in': True if (len(intersection.streets_in) == 1) else False,
+                    'green_light': True if (intersection.streets_in[intersection.current_light_index] == street_in) else False
+                }
+                i = i + 1
+
+        intersections_df = pd.DataFrame.from_dict(intersections_dict, "index")
+        end_time = datetime.now()
+        execution_time = (end_time - start_time).total_seconds() * 1000
+
+        print("Creating intersections_df time: {}ms".format(execution_time)) if dbg_print==True else False
+
+        return intersections_df
+
+
+    def make_cars_df(self, cars, streets_df, dbg_print=False):
+        start_time = datetime.now()
+        cars_dict = {}
+
+        i = 0
+        for index, car in cars.items():
+            current_street_name = car.path[car.current_street]
+            done = True if car.current_street == -1 else False
+            cars_dict[i] = {
+                'name': car.name,
+                'score': car.score,
+                'current_street': current_street_name,
+                'total_street': car.total_street,
+                'done': done,
+                'total_travel_time': streets_df.filter(car.path, axis=0)['time_used'].sum()
+            }
+            i = i + 1
+
+        cars_df = pd.DataFrame.from_dict(cars_dict, "index")
+        end_time = datetime.now()
+        execution_time = (end_time - start_time).total_seconds() * 1000
+
+        print("Creating cars_df time: {}ms".format(execution_time)) if dbg_print == True else None
+
+        return cars_df
